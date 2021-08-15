@@ -1,0 +1,38 @@
+import gym
+import numpy as np
+import torch as th
+from torch import nn
+
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+
+
+class MicroRTSExtractor(BaseFeaturesExtractor):
+    """
+    Reorders input features before performing convolution.
+
+    Based on the following:
+    https://github.com/vwxyzjn/invalid-action-masking/blob/c0d47cca3c2d8522ce97412b76ca4e4e36c5d95e/invalid_action_masking/ppo_4x4.py#L232
+    """
+
+    def __init__(self, observation_space: gym.spaces.Box):
+        super().__init__(observation_space, features_dim=1)
+
+        n_input_channels = observation_space.shape[-1]
+        self.cnn = nn.Sequential(
+            nn.Conv2d(n_input_channels, 16, kernel_size=2),
+            nn.MaxPool2d(1),
+            nn.ReLU(),
+            nn.Flatten(),
+        )
+
+        # Compute shape by doing one forward pass
+        with th.no_grad():
+            obs = observation_space.sample()[None]
+            x = th.Tensor(np.moveaxis(obs, -1, 1)).float()
+            features_dim = self.cnn(x).shape[1]
+
+        self._features_dim = features_dim
+
+    def forward(self, observations: th.Tensor) -> th.Tensor:
+        x = th.movedim(observations, -1, 1)
+        return self.cnn(x)
