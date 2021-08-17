@@ -18,11 +18,11 @@ pip install -r requirements.txt
 ### Original implementation
 
 ```
-python original/train_ppo_4x4.py
+python original/new_train_ppo_4x4.py
 ```
 
 Note that this script is functionally identical to
-[the original found here](https://github.com/vwxyzjn/invalid-action-masking/blob/c0d47cca3c2d8522ce97412b76ca4e4e36c5d95e/invalid_action_masking/ppo_no_mask_4x4.py).
+[the original found here](https://github.com/vwxyzjn/invalid-action-masking/blob/54bfb37b939e8f9e77dcf96f79b7df4953e012f2/ppo.py).
 
 ### Stable Baselines 3 (SB3) implementation
 
