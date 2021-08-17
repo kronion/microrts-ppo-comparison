@@ -33,6 +33,16 @@ max_grad_norm = 0.5
 learning_rate = 0.0003
 
 
+def make_env(gym_id, seed, idx):
+    def thunk():
+        env = gym.make(gym_id)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        env.seed(seed)
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
+        return env
+    return thunk
+
 # Maintain a similar CLI to the original paper's implementation
 @click.command()
 @click.argument("output_folder", type=click.Path())
@@ -61,7 +71,8 @@ def train(output_folder, load_path, seed, total_timesteps, torch_deterministic):
     full_output = base_output / datetime.datetime.now().isoformat(timespec="seconds")
     logger.configure(folder=str(full_output))
 
-    env = gym.make("MicrortsMining4x4F9-v0")
+    
+    # env = gym.make()
 
     # We want deterministic operations whenever possible, but unfortunately we
     # still depend on some non-deterministic operations like
@@ -72,14 +83,14 @@ def train(output_folder, load_path, seed, total_timesteps, torch_deterministic):
     random.seed(SEED)
     np.random.seed(SEED)
     th.manual_seed(SEED)
-    env.seed(SEED)
-    env.action_space.seed(SEED)
-    env.observation_space.seed(SEED)
+    # env.seed(SEED)
+    # env.action_space.seed(SEED)
+    # env.observation_space.seed(SEED)
 
-    # Normalize env with VecNormalize
-    env = Monitor(env)
-    env = DummyVecEnv([lambda: env] * 8)
-    env = VecNormalize(env, norm_reward=False)
+    # # Normalize env with VecNormalize
+    # env = Monitor(env)
+    # env = DummyVecEnv([lambda: env] * 8)
+    env = DummyVecEnv([make_env("MicrortsMining4x4F9-v0", SEED+i, i) for i in range(8)])
 
     if load_path:
         model = PPO.load(load_path, env)
@@ -101,7 +112,9 @@ def train(output_folder, load_path, seed, total_timesteps, torch_deterministic):
             },
             tensorboard_log=f"runs/{run.id}"
         )
-
+    print(env.num_envs)
+    print(model.policy)
+    # raise
     model.learn(
         total_timesteps=total_timesteps,
         callback=WandbCallback(

@@ -5,6 +5,10 @@ from torch import nn
 
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
+def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
+    th.nn.init.orthogonal_(layer.weight, std)
+    th.nn.init.constant_(layer.bias, bias_const)
+    return layer
 
 class MicroRTSExtractor(BaseFeaturesExtractor):
     """
@@ -19,8 +23,7 @@ class MicroRTSExtractor(BaseFeaturesExtractor):
 
         n_input_channels = observation_space.shape[-1]
         self.cnn = nn.Sequential(
-            nn.Conv2d(n_input_channels, 16, kernel_size=2),
-            # nn.MaxPool2d(1),
+            layer_init(nn.Conv2d(n_input_channels, 16, kernel_size=3, stride=2)),
             nn.ReLU(),
             nn.Flatten(),
         )
@@ -34,5 +37,4 @@ class MicroRTSExtractor(BaseFeaturesExtractor):
         self._features_dim = features_dim
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
-        x = th.movedim(observations, -1, 1)
-        return self.cnn(x)
+        return self.cnn(observations.permute((0, 3, 1, 2)))
