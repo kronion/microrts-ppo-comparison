@@ -20,7 +20,7 @@ class MicroRTSExtractor(BaseFeaturesExtractor):
         n_input_channels = observation_space.shape[-1]
         self.cnn = nn.Sequential(
             nn.Conv2d(n_input_channels, 16, kernel_size=2),
-            nn.MaxPool2d(1),
+            # nn.MaxPool2d(1),
             nn.ReLU(),
             nn.Flatten(),
         )

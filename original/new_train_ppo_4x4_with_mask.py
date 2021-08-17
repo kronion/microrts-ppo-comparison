@@ -23,7 +23,7 @@ if __name__ == "__main__":
     # Common arguments
     parser.add_argument('--exp-name', type=str, default=os.path.basename(__file__).rstrip(".py"),
                         help='the name of this experiment')
-    parser.add_argument('--gym-id', type=str, default="MicrortsMining4x4F9-v0",
+    parser.add_argument('--gym-id', type=str, default="MicrortsMining10x10F9-v0",
                         help='the id of the gym environment')
     parser.add_argument('--learning-rate', type=float, default=2.5e-4,
                         help='the learning rate of the optimizer')
@@ -178,6 +178,22 @@ envs = VecPyTorch(DummyVecEnv([make_env(args.gym_id, args.seed+i, i) for i in ra
 assert isinstance(envs.action_space, MultiDiscrete), "only MultiDiscrete action space is supported"
 
 # ALGO LOGIC: initialize agent here:
+class CategoricalMasked(Categorical):
+    def __init__(self, probs=None, logits=None, validate_args=None, masks=[]):
+        self.masks = masks
+        if len(self.masks) == 0:
+            super(CategoricalMasked, self).__init__(probs, logits, validate_args)
+        else:
+            self.masks = masks.type(torch.BoolTensor).to(device)
+            logits = torch.where(self.masks, logits, torch.tensor(-1e+8).to(device))
+            super(CategoricalMasked, self).__init__(probs, logits, validate_args)
+    
+    def entropy(self):
+        if len(self.masks) == 0:
+            return super(CategoricalMasked, self).entropy()
+        p_log_p = self.logits * self.probs
+        p_log_p = torch.where(self.masks, p_log_p, torch.tensor(0.).to(device))
+        return -p_log_p.sum(-1)
 
 class Scale(nn.Module):
     def __init__(self, scale):
@@ -198,8 +214,10 @@ class Agent(nn.Module):
         self.network = nn.Sequential(
             layer_init(nn.Conv2d(27, 16, kernel_size=3, stride=2)),
             nn.ReLU(),
+            layer_init(nn.Conv2d(16, 32, kernel_size=2)),
+            nn.ReLU(),
             nn.Flatten(),
-            layer_init(nn.Linear(16*1*1, 128)),
+            layer_init(nn.Linear(32*3*3, 128)),
             nn.ReLU(),)
         self.actor = layer_init(nn.Linear(128, envs.action_space.nvec.sum()), std=0.01)
         self.critic = layer_init(nn.Linear(128, 1), std=1)
@@ -207,10 +225,16 @@ class Agent(nn.Module):
     def forward(self, x):
         return self.network(x)
 
-    def get_action(self, x, action=None):
+    def get_action(self, x, action=None, invalid_action_masks=None):
         logits = self.actor(self.forward(x))
         split_logits = torch.split(logits, envs.action_space.nvec.tolist(), dim=1)
-        multi_categoricals = [Categorical(logits=logits) for logits in split_logits]
+        
+        if invalid_action_masks is not None:
+            split_invalid_action_masks = torch.split(invalid_action_masks, envs.action_space.nvec.tolist(), dim=1)
+            multi_categoricals = [CategoricalMasked(logits=logits, masks=iam) for (logits, iam) in zip(split_logits, split_invalid_action_masks)]
+        else:
+            multi_categoricals = [Categorical(logits=logits) for logits in split_logits]
+        
         if action is None:
             action = torch.stack([categorical.sample() for categorical in multi_categoricals])
         logprob = torch.stack([categorical.log_prob(a) for a, categorical in zip(action, multi_categoricals)])
@@ -233,6 +257,7 @@ logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
 rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
 dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
 values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+invalid_action_masks = torch.zeros((args.num_steps, args.num_envs) + (envs.action_space.nvec.sum(),)).to(device)
 # TRY NOT TO MODIFY: start the game
 global_step = 0
 # Note how `next_obs` and `next_done` are used; their usage is equivalent to
@@ -253,11 +278,12 @@ for update in range(1, num_updates+1):
         global_step += 1 * args.num_envs
         obs[step] = next_obs
         dones[step] = next_done
+        invalid_action_masks[step] = torch.Tensor(np.array(envs.get_attr("action_mask")))
 
         # ALGO LOGIC: put action logic here
         with torch.no_grad():
             values[step] = agent.get_value(obs[step]).flatten()
-            action, logproba, _ = agent.get_action(obs[step])
+            action, logproba, _ = agent.get_action(obs[step], invalid_action_masks=invalid_action_masks[step])
         
         actions[step] = action.T
         logprobs[step] = logproba
@@ -309,6 +335,7 @@ for update in range(1, num_updates+1):
     b_advantages = advantages.reshape(-1)
     b_returns = returns.reshape(-1)
     b_values = values.reshape(-1)
+    b_invalid_action_masks = invalid_action_masks.reshape((-1, invalid_action_masks.shape[-1]))
 
     # Optimizaing the policy and value network
     target_agent = Agent().to(device)
@@ -325,7 +352,8 @@ for update in range(1, num_updates+1):
 
             _, newlogproba, entropy = agent.get_action(
                 b_obs[minibatch_ind],
-                b_actions.long()[minibatch_ind].T)
+                b_actions.long()[minibatch_ind].T,
+                b_invalid_action_masks[minibatch_ind])
             ratio = (newlogproba - b_logprobs[minibatch_ind]).exp()
 
             # Stats
@@ -357,6 +385,13 @@ for update in range(1, num_updates+1):
 
         if args.kle_stop:
             if approx_kl > args.target_kl:
+                break
+        if args.kle_rollback:
+            if (b_logprobs[minibatch_ind] - agent.get_action(
+                    b_obs[minibatch_ind],
+                    b_actions.long()[minibatch_ind].T,
+                    b_invalid_action_masks[minibatch_ind])[1]).mean() > args.target_kl:
+                agent.load_state_dict(target_agent.state_dict())
                 break
 
     # TRY NOT TO MODIFY: record rewards for plotting purposes
