@@ -8,15 +8,16 @@ import gym_microrts
 import numpy as np
 import torch as th
 import torch.nn as nn
-from stable_baselines3.common import logger
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.callbacks import EvalCallback
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from stable_baselines3.ppo import CnnPolicy, MlpPolicy, PPO
 import wandb
+from stable_baselines3.common import logger
+from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.ppo import PPO
 from wandb.integration.sb3 import WandbCallback
 
 from extractors import MicroRTSExtractor
+from policies import CustomActorCriticPolicy
 
 
 class Defaults:
@@ -116,7 +117,7 @@ def train(
         model = PPO.load(load_path, env)
     else:
         model = PPO(
-            MlpPolicy,
+            CustomActorCriticPolicy,
             env,
             verbose=1,
             batch_size=256,
@@ -129,9 +130,10 @@ def train(
             max_grad_norm=max_grad_norm,
             learning_rate=learning_rate,
             policy_kwargs={
-                "net_arch": [128],
+                "net_arch": [dict(pi=[128], vf=[128])],
                 "activation_fn": nn.ReLU,
-                "features_extractor_class": MicroRTSExtractor,
+                "policy_features_extractor_class": MicroRTSExtractor,
+                "value_features_extractor_class": MicroRTSExtractor,
             },
             tensorboard_log=str(full_output / f"runs/{run.id}"),
         )
