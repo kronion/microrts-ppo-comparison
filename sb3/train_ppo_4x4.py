@@ -15,20 +15,23 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.ppo import CnnPolicy, MlpPolicy, PPO
 import wandb
 from wandb.integration.sb3 import WandbCallback
+
 from extractors import MicroRTSExtractor
 
 
-EVAL_FREQ = 5000
-EVAL_EPISODES = 10
+class Defaults:
+    TOTAL_TIMESTEPS = 100000
+    EVAL_FREQ = 5000
+    EVAL_EPISODES = 10
+    SEED = 1
 
-SEED = 1
+    # Parameters specified by this paper: https://arxiv.org/pdf/2006.14171.pdf
+    ENTROPY_COEF = 0.01
 
 
-# Parameters specified by this paper: https://arxiv.org/pdf/2006.14171.pdf
 gamma = 0.99
 gae_lambda = 0.97
 clip_coef = 0.2
-entropy_reg_coef = 0.01
 max_grad_norm = 0.5
 learning_rate = 0.0003
 
@@ -47,32 +50,59 @@ def make_env(gym_id, seed, idx):
 @click.command()
 @click.argument("output_folder", type=click.Path())
 @click.option("--load", "-l", "load_path")
-@click.option("--seed", type=int, default=1, help="seed of the experiment")
+@click.option("--seed", type=int, default=Defaults.SEED, help="seed of the experiment")
 @click.option(
     "--total-timesteps",
     type=int,
-    default=1000000,
+    default=Defaults.TOTAL_TIMESTEPS,
     help="total timesteps of the experiments",
+)
+@click.option(
+    "--eval-freq",
+    type=int,
+    default=Defaults.EVAL_FREQ,
+    help="number of timesteps between model evaluations",
+)
+@click.option(
+    "--eval-episodes",
+    type=int,
+    default=Defaults.EVAL_EPISODES,
+    help="number of games to play during each model evaluation step",
 )
 @click.option(
     "--torch-deterministic/--no-torch-deterministic",
     default=True,
     help="if toggled, `torch.backends.cudnn.deterministic=False`",
 )
-def train(output_folder, load_path, seed, total_timesteps, torch_deterministic):
+@click.option(
+    "--entropy-coef",
+    type=float,
+    default=Defaults.ENTROPY_COEF,
+    help="Coefficient for entropy component of loss function",
+)
+def train(
+        output_folder,
+        load_path,
+        seed,
+        total_timesteps,
+        eval_freq,
+        eval_episodes,
+        torch_deterministic,
+        entropy_coef,
+):
     run = wandb.init(
         project="sb3",
         sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
         monitor_gym=True,  # auto-upload the videos of agents playing the game
         save_code=True,  # optional
+        anonymous="true",  # wandb documentation is wrong...
     )
 
     base_output = Path(output_folder)
     full_output = base_output / datetime.datetime.now().isoformat(timespec="seconds")
     logger.configure(folder=str(full_output))
 
-    
-    # env = gym.make()
+    env = gym.make("MicrortsMining4x4F9-v0")
 
     # We want deterministic operations whenever possible, but unfortunately we
     # still depend on some non-deterministic operations like
@@ -80,17 +110,17 @@ def train(output_folder, load_path, seed, total_timesteps, torch_deterministic):
     # th.use_deterministic_algorithms(torch_deterministic)
     th.backends.cudnn.deterministic = torch_deterministic
 
-    random.seed(SEED)
-    np.random.seed(SEED)
-    th.manual_seed(SEED)
-    # env.seed(SEED)
-    # env.action_space.seed(SEED)
-    # env.observation_space.seed(SEED)
+    random.seed(seed)
+    np.random.seed(seed)
+    th.manual_seed(seed)
+    env.seed(seed)
+    env.action_space.seed(seed)
+    env.observation_space.seed(seed)
 
     # # Normalize env with VecNormalize
-    # env = Monitor(env)
-    # env = DummyVecEnv([lambda: env] * 8)
-    env = DummyVecEnv([make_env("MicrortsMining4x4F9-v0", SEED+i, i) for i in range(8)])
+    env = Monitor(env)
+    env = DummyVecEnv([lambda: env])
+    env = VecNormalize(env, norm_reward=False)
 
     if load_path:
         model = PPO.load(load_path, env)
@@ -98,30 +128,27 @@ def train(output_folder, load_path, seed, total_timesteps, torch_deterministic):
         model = PPO(
             MlpPolicy,
             env,
-            n_steps=128,
-            n_epochs=4,
-            learning_rate=lambda progression: 2.5e-4 * progression,
-            ent_coef=0.01,
-            clip_range=0.1,
-            batch_size=256,
             verbose=1,
+            batch_size=256,
+            n_epochs=4,
+            gamma=gamma,
+            gae_lambda=gae_lambda,
+            clip_range=clip_coef,
+            clip_range_vf=clip_coef,
+            ent_coef=entropy_coef,
+            max_grad_norm=max_grad_norm,
+            learning_rate=learning_rate,
             policy_kwargs={
                 "net_arch": [128],
                 "activation_fn": nn.ReLU,
                 "features_extractor_class": MicroRTSExtractor,
             },
-            tensorboard_log=f"runs/{run.id}"
+            tensorboard_log=str(full_output / f"runs/{run.id}"),
         )
-    print(env.num_envs)
-    print(model.policy)
-    # raise
-    model.learn(
-        total_timesteps=total_timesteps,
-        callback=WandbCallback(
-            model_save_path=f"models/{run.id}",
-            verbose=2,
-        ),
-    )
+
+    wandb_callback = WandbCallback(model_save_path=str(full_output / f"models/{run.id}"))
+
+    model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
     model.save(str(full_output / "final_model"))
     env.close()
 
