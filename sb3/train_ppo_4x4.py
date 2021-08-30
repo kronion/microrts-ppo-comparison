@@ -38,9 +38,8 @@ max_grad_norm = 0.5
 learning_rate = 0.0003
 
 def mask_fn(env: gym.Env) -> np.ndarray:
-    # Do whatever you'd like in this function to return the action mask
-    # for the current env. In this example, we assume the env has a
-    # helpful method we can rely on.
+    # Disable mask:
+    # return np.ones_like(env.action_mask)
     return env.action_mask
 
 
