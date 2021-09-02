@@ -112,7 +112,7 @@ def train(
     eval_env = make_vec_env(env_id, n_envs=10, wrapper_class=get_wrapper)
     eval_env = VecNormalize(eval_env, training=False, norm_reward=False)
 
-    eval_callback = MaskableEvalCallback(eval_env, eval_freq=eval_freq, n_eval_episodes=eval_episodes)
+    eval_callback = MaskableEvalCallback(eval_env, eval_freq=max(eval_freq // n_envs, 1), n_eval_episodes=eval_episodes)
 
     if True:
         lr = lambda progress_remaining: progress_remaining * learning_rate
