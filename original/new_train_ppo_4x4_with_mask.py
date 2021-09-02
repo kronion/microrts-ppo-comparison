@@ -39,7 +39,7 @@ if __name__ == "__main__":
                         help='run the script in production mode and use wandb to log outputs')
     parser.add_argument('--capture-video', type=lambda x:bool(strtobool(x)), default=False, nargs='?', const=True,
                         help='weather to capture videos of the agent performances (check out `videos` folder)')
-    parser.add_argument('--wandb-project-name', type=str, default="cleanRL",
+    parser.add_argument('--wandb-project-name', type=str, default="invalidActions",
                         help="the wandb's project name")
     parser.add_argument('--wandb-entity', type=str, default=None,
                         help="the entity (team) of wandb's project")
@@ -187,7 +187,7 @@ class CategoricalMasked(Categorical):
             self.masks = masks.type(torch.BoolTensor).to(device)
             logits = torch.where(self.masks, logits, torch.tensor(-1e+8).to(device))
             super(CategoricalMasked, self).__init__(probs, logits, validate_args)
-    
+
     def entropy(self):
         if len(self.masks) == 0:
             return super(CategoricalMasked, self).entropy()
@@ -228,13 +228,13 @@ class Agent(nn.Module):
     def get_action(self, x, action=None, invalid_action_masks=None):
         logits = self.actor(self.forward(x))
         split_logits = torch.split(logits, envs.action_space.nvec.tolist(), dim=1)
-        
+
         if invalid_action_masks is not None:
             split_invalid_action_masks = torch.split(invalid_action_masks, envs.action_space.nvec.tolist(), dim=1)
             multi_categoricals = [CategoricalMasked(logits=logits, masks=iam) for (logits, iam) in zip(split_logits, split_invalid_action_masks)]
         else:
             multi_categoricals = [Categorical(logits=logits) for logits in split_logits]
-        
+
         if action is None:
             action = torch.stack([categorical.sample() for categorical in multi_categoricals])
         logprob = torch.stack([categorical.log_prob(a) for a, categorical in zip(action, multi_categoricals)])
@@ -274,7 +274,7 @@ for update in range(1, num_updates+1):
 
     # TRY NOT TO MODIFY: prepare the execution of the game.
     for step in range(0, args.num_steps):
-        envs.env_method("render", indices=0)
+        # envs.env_method("render", indices=0)
         global_step += 1 * args.num_envs
         obs[step] = next_obs
         dones[step] = next_done
@@ -284,7 +284,7 @@ for update in range(1, num_updates+1):
         with torch.no_grad():
             values[step] = agent.get_value(obs[step]).flatten()
             action, logproba, _ = agent.get_action(obs[step], invalid_action_masks=invalid_action_masks[step])
-        
+
         actions[step] = action.T
         logprobs[step] = logproba
 
