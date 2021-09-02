@@ -19,10 +19,11 @@ from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from extractors import MicroRTSExtractor
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
+from stable_baselines3.common.env_util import make_vec_env
 
 
 class Defaults:
-    TOTAL_TIMESTEPS = 300000
+    TOTAL_TIMESTEPS = 10000000
     EVAL_FREQ = 10000
     EVAL_EPISODES = 10
     SEED = 42
@@ -32,26 +33,18 @@ class Defaults:
 
 
 gamma = 0.99
-gae_lambda = 0.97
-clip_coef = 0.2
+gae_lambda = 0.95
+clip_coef = 0.1
 max_grad_norm = 0.5
-learning_rate = 0.0003
+learning_rate = 2.5e-4
 
 def mask_fn(env: gym.Env) -> np.ndarray:
     # Disable mask:
     # return np.ones_like(env.action_mask)
     return env.action_mask
 
-
-def make_env(gym_id, seed, idx):
-    def thunk():
-        env = gym.make(gym_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.seed(seed)
-        env.action_space.seed(seed)
-        env.observation_space.seed(seed)
-        return env
-    return thunk
+def get_wrapper(env: gym.Env): -> gym.Env
+    return ActionMasker(env, mask_fn)
 
 # Maintain a similar CLI to the original paper's implementation
 @click.command()
@@ -109,34 +102,23 @@ def train(
     full_output = base_output / datetime.datetime.now().isoformat(timespec="seconds")
     logger.configure(folder=str(full_output))
 
-    env = gym.make("MicrortsMining4x4F9-v0")
-
-    # We want deterministic operations whenever possible, but unfortunately we
-    # still depend on some non-deterministic operations like
-    # scatter_add_cuda_kernel. For now we settle for deterministic convolution.
-    # th.use_deterministic_algorithms(torch_deterministic)
-    th.backends.cudnn.deterministic = torch_deterministic
-
-    random.seed(seed)
-    np.random.seed(seed)
-    th.manual_seed(seed)
-    env.seed(seed)
-    env.action_space.seed(seed)
-    env.observation_space.seed(seed)
-
-    # # Normalize env with VecNormalize
-    env = Monitor(env)
-    env = ActionMasker(env, mask_fn)  # Wrap to enable masking
-    env = DummyVecEnv([lambda: env])
+    env_id = "MicrortsMining10x10F9-v0"
+    n_envs = 8
+    env = make_vec_env(env_id, n_envs=n_envs, wrapper_class=get_wrapper)
     env = VecNormalize(env, norm_reward=False)
 
-    eval_env = gym.make("MicrortsMining4x4F9-v0")
-    eval_env = Monitor(eval_env)
-    eval_env = ActionMasker(eval_env, mask_fn)  # Wrap to enable masking
-    eval_env = DummyVecEnv([lambda: eval_env])
+    eval_env = make_vec_env(env_id, n_envs=10, wrapper_class=get_wrapper)
     eval_env = VecNormalize(eval_env, training=False, norm_reward=False)
 
     eval_callback = MaskableEvalCallback(eval_env, eval_freq=eval_freq, n_eval_episodes=eval_episodes)
+
+    if True:
+        lr = lambda progress_remaining: progress_remaining * learning_rate
+
+    if False:
+        clip_range_vf = None
+    else:
+        clip_range_vf = clip_coef
 
     if load_path:
         model = PPO.load(load_path, env)
@@ -150,10 +132,10 @@ def train(
             gamma=gamma,
             gae_lambda=gae_lambda,
             clip_range=clip_coef,
-            clip_range_vf=clip_coef,
+            clip_range_vf=clip_range_vf,
             ent_coef=entropy_coef,
             max_grad_norm=max_grad_norm,
-            learning_rate=learning_rate,
+            learning_rate=lr,
             seed=seed,
             policy_kwargs={
                 "net_arch": [128],
