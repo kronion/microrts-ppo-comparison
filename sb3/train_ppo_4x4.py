@@ -8,18 +8,17 @@ import gym_microrts
 import numpy as np
 import torch as th
 import torch.nn as nn
-from stable_baselines3.common import logger
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.callbacks import EvalCallback
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from stable_baselines3.ppo import CnnPolicy, MlpPolicy, PPO
 import wandb
-from wandb.integration.sb3 import WandbCallback
-from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from extractors import MicroRTSExtractor
 from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from sb3_contrib.common.wrappers import ActionMasker
+from stable_baselines3.common import logger
+from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import VecNormalize
+from stable_baselines3.ppo import PPO
+from wandb.integration.sb3 import WandbCallback
 
 
 class Defaults:
@@ -38,13 +37,16 @@ clip_coef = 0.1
 max_grad_norm = 0.5
 learning_rate = 2.5e-4
 
+
 def mask_fn(env: gym.Env) -> np.ndarray:
     # Disable mask:
     # return np.ones_like(env.action_mask)
     return env.action_mask
 
-def get_wrapper(env: gym.Env): -> gym.Env
+
+def get_wrapper(env: gym.Env) -> gym.Env:
     return ActionMasker(env, mask_fn)
+
 
 # Maintain a similar CLI to the original paper's implementation
 @click.command()
@@ -81,14 +83,14 @@ def get_wrapper(env: gym.Env): -> gym.Env
     help="Coefficient for entropy component of loss function",
 )
 def train(
-        output_folder,
-        load_path,
-        seed,
-        total_timesteps,
-        eval_freq,
-        eval_episodes,
-        torch_deterministic,
-        entropy_coef,
+    output_folder,
+    load_path,
+    seed,
+    total_timesteps,
+    eval_freq,
+    eval_episodes,
+    torch_deterministic,
+    entropy_coef,
 ):
     run = wandb.init(
         project="invalidActions",
