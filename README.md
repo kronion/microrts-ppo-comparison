@@ -7,9 +7,19 @@ The original implementation is compared against a new model using Stable Baselin
 
 ## Installation
 
-You should already have Python 3 and CUDA installed. Then simply install the necessary Python packages:
+You should already have Python 3.8+, Java 8+, and CUDA 10.1+ installed.
 
+Install MicroRTS JAR:
+```bash
+rm -fR ~/microrts && mkdir ~/microrts && \
+    wget -O ~/microrts/microrts.zip http://microrts.s3.amazonaws.com/microrts/artifacts/202004222224.microrts.zip && \
+    unzip ~/microrts/microrts.zip -d ~/microrts/
 ```
+
+Then install the necessary Python packages:
+```
+
+```bash
 pip install -r requirements.txt
 ```
 
@@ -17,7 +27,7 @@ pip install -r requirements.txt
 
 ### Original implementation
 
-```
+```bash
 python original/new_train_ppo_4x4.py
 ```
 
@@ -26,7 +36,7 @@ Note that this script is functionally identical to
 
 ### Stable Baselines 3 (SB3) implementation
 
-```
+```bash
 python sb3/train_ppo_4x4.py zoo/4x4
 ```
 
