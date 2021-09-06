@@ -1,5 +1,6 @@
 click==8.0.1
 gym-microrts==0.1.3
+git+https://github.com/Stable-Baselines-Team/stable-baselines3-contrib@refs/pull/25/head#egg=sb3-contrib
 stable-baselines3==1.1.0
 tensorboard==2.6.0
 wandb==0.12.0

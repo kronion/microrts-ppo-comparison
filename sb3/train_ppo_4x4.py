@@ -8,6 +8,8 @@ import gym_microrts
 import numpy as np
 import torch as th
 import torch.nn as nn
+from sb3_contrib.common.maskable.policies import MaskableActorCriticPolicy
+from sb3_contrib.ppo_mask import MaskablePPO
 from stable_baselines3.common import logger
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import EvalCallback
@@ -20,7 +22,7 @@ from extractors import MicroRTSExtractor
 
 
 class Defaults:
-    TOTAL_TIMESTEPS = 100000
+    TOTAL_TIMESTEPS = 500000
     EVAL_FREQ = 5000
     EVAL_EPISODES = 10
     SEED = 1
@@ -36,15 +38,16 @@ max_grad_norm = 0.5
 learning_rate = 0.0003
 
 
-def make_env(gym_id, seed, idx):
-    def thunk():
-        env = gym.make(gym_id)
-        env = gym.wrappers.RecordEpisodeStatistics(env)
-        env.seed(seed)
-        env.action_space.seed(seed)
-        env.observation_space.seed(seed)
-        return env
-    return thunk
+# def make_env(gym_id, seed, idx):
+#     def thunk():
+#         env = gym.make(gym_id)
+#         env = gym.wrappers.RecordEpisodeStatistics(env)
+#         env.seed(seed)
+#         env.action_space.seed(seed)
+#         env.observation_space.seed(seed)
+#         return env
+#     return thunk
+
 
 # Maintain a similar CLI to the original paper's implementation
 @click.command()
@@ -80,15 +83,21 @@ def make_env(gym_id, seed, idx):
     default=Defaults.ENTROPY_COEF,
     help="Coefficient for entropy component of loss function",
 )
+@click.option(
+    "--mask/--no-mask",
+    default=False,
+    help="if toggled, enable invalid action masking",
+)
 def train(
-        output_folder,
-        load_path,
-        seed,
-        total_timesteps,
-        eval_freq,
-        eval_episodes,
-        torch_deterministic,
-        entropy_coef,
+    output_folder,
+    load_path,
+    seed,
+    total_timesteps,
+    eval_freq,
+    eval_episodes,
+    torch_deterministic,
+    entropy_coef,
+    mask,
 ):
     run = wandb.init(
         project="sb3",
@@ -122,11 +131,18 @@ def train(
     env = DummyVecEnv([lambda: env])
     env = VecNormalize(env, norm_reward=False)
 
-    if load_path:
-        model = PPO.load(load_path, env)
+    if mask:
+        Alg = MaskablePPO
+        Policy = MaskableActorCriticPolicy
     else:
-        model = PPO(
-            MlpPolicy,
+        Alg = PPO
+        Policy = MlpPolicy
+
+    if load_path:
+        model = Alg.load(load_path, env)
+    else:
+        model = Alg(
+            Policy,
             env,
             verbose=1,
             batch_size=256,
@@ -148,7 +164,11 @@ def train(
 
     wandb_callback = WandbCallback(model_save_path=str(full_output / f"models/{run.id}"))
 
-    model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
+    if mask:
+        model.learn(total_timesteps=total_timesteps, callback=wandb_callback, use_masking=mask)
+    else:
+        model.learn(total_timesteps=total_timesteps, callback=wandb_callback)
+
     model.save(str(full_output / "final_model"))
     env.close()
 
