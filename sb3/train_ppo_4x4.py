@@ -8,18 +8,19 @@ import gym_microrts
 import numpy as np
 import torch as th
 import torch.nn as nn
+import wandb
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
+from sb3_contrib.common.wrappers import ActionMasker
 from sb3_contrib.ppo_mask import MaskablePPO
 from stable_baselines3.common import logger
-from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.ppo import PPO
-import wandb
 from wandb.integration.sb3 import WandbCallback
-from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
+
 from extractors import MicroRTSExtractor
-from sb3_contrib import MaskablePPO
-from sb3_contrib.common.wrappers import ActionMasker
 
 
 class Defaults:
@@ -43,17 +44,6 @@ def mask_fn(env: gym.Env) -> np.ndarray:
     # Uncomment to make masking a no-op
     # return np.ones_like(env.action_mask)
     return env.action_mask
-
-
-# def make_env(gym_id, seed, idx):
-#     def thunk():
-#         env = gym.make(gym_id)
-#         env = gym.wrappers.RecordEpisodeStatistics(env)
-#         env.seed(seed)
-#         env.action_space.seed(seed)
-#         env.observation_space.seed(seed)
-#         return env
-#     return thunk
 
 
 # Maintain a similar CLI to the original paper's implementation
@@ -91,9 +81,13 @@ def mask_fn(env: gym.Env) -> np.ndarray:
     help="Coefficient for entropy component of loss function",
 )
 @click.option(
-    "--mask/--no-mask",
+    "--mask/--no-mask", default=False, help="if toggled, enable invalid action masking",
+)
+@click.option(
+    "--wandb/--no-wandb",
+    "use_wandb",
     default=False,
-    help="if toggled, enable invalid action masking",
+    help="if toggled, enable logging to Weights and Biases",
 )
 def train(
     output_folder,
@@ -105,14 +99,16 @@ def train(
     torch_deterministic,
     entropy_coef,
     mask,
+    use_wandb,
 ):
-    run = wandb.init(
-        project="sb3",
-        sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
-        monitor_gym=True,  # auto-upload the videos of agents playing the game
-        save_code=True,  # optional
-        anonymous="true",  # wandb documentation is wrong...
-    )
+    if use_wandb:
+        run = wandb.init(
+            project="sb3",
+            sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
+            monitor_gym=True,  # auto-upload the videos of agents playing the game
+            save_code=True,  # optional
+            anonymous="true",  # wandb documentation is wrong...
+        )
 
     base_output = Path(output_folder)
     full_output = base_output / datetime.datetime.now().isoformat(timespec="seconds")
@@ -126,12 +122,17 @@ def train(
     # th.use_deterministic_algorithms(torch_deterministic)
     th.backends.cudnn.deterministic = torch_deterministic
 
-    random.seed(seed)
-    np.random.seed(seed)
-    th.manual_seed(seed)
-    env.seed(seed)
-    env.action_space.seed(seed)
-    env.observation_space.seed(seed)
+    # These three are handled by SB3 just by providing the seed to the alg class
+    # random.seed(seed)
+    # np.random.seed(seed)
+    # th.manual_seed(seed)
+
+    # TODO:
+    # These three should be handled as well (SB3 calls .seed() on the env), but gym-microrts
+    # doesn't follow the gym API correctly
+    # env.seed(seed)
+    # env.action_space.seed(seed)
+    # env.observation_space.seed(seed)
 
     # # Normalize env with VecNormalize
     env = Monitor(env)
@@ -139,18 +140,25 @@ def train(
     env = DummyVecEnv([lambda: env])
     env = VecNormalize(env, norm_reward=False)
 
-    if mask:
-        Alg = MaskablePPO
-    else:
-        Alg = PPO
-
     eval_env = gym.make("MicrortsMining4x4F9-v0")
     eval_env = Monitor(eval_env)
     eval_env = ActionMasker(eval_env, mask_fn)  # Wrap to enable masking
     eval_env = DummyVecEnv([lambda: eval_env])
     eval_env = VecNormalize(eval_env, training=False, norm_reward=False)
 
-    eval_callback = MaskableEvalCallback(eval_env, eval_freq=eval_freq, n_eval_episodes=eval_episodes)
+    eval_callback = MaskableEvalCallback(
+        eval_env, eval_freq=eval_freq, n_eval_episodes=eval_episodes
+    )
+
+    if mask:
+        Alg = MaskablePPO
+        EvalCallback = MaskableEvalCallback
+    else:
+        Alg = PPO
+
+    eval_callback = EvalCallback(
+        eval_env, eval_freq=eval_freq, n_eval_episodes=eval_episodes
+    )
 
     if load_path:
         model = Alg.load(load_path, env)
@@ -178,12 +186,21 @@ def train(
             tensorboard_log=str(full_output / f"runs/{run.id}"),
         )
 
-    wandb_callback = WandbCallback(model_save_path=str(full_output / f"models/{run.id}"))
+    callbacks = [eval_callback]
+    if use_wandb:
+        wandb_callback = WandbCallback(
+            model_save_path=str(full_output / f"models/{run.id}")
+        )
+        callbacks.append(wandb_callback)
 
     if mask:
-        model.learn(total_timesteps=total_timesteps, callback=[eval_callback, wandb_callback], use_masking=mask)
+        model.learn(
+            total_timesteps=total_timesteps, callback=callbacks, use_masking=mask,
+        )
     else:
-        model.learn(total_timesteps=total_timesteps, callback=[eval_callback, wandb_callback])
+        model.learn(
+            total_timesteps=total_timesteps, callback=callbacks,
+        )
 
     model.save(str(full_output / "final_model"))
     env.close()
