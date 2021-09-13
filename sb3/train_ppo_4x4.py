@@ -1,5 +1,4 @@
 import datetime
-import random
 from pathlib import Path
 
 import click
@@ -13,7 +12,6 @@ from sb3_contrib import MaskablePPO
 from sb3_contrib.common.maskable.callbacks import MaskableEvalCallback
 from sb3_contrib.common.wrappers import ActionMasker
 from sb3_contrib.ppo_mask import MaskablePPO
-from stable_baselines3.common import logger
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.monitor import Monitor
@@ -21,11 +19,11 @@ from stable_baselines3.common.vec_env import VecNormalize
 from stable_baselines3.ppo import PPO
 from wandb.integration.sb3 import WandbCallback
 
-from extractors import MicroRTSExtractor
+from extractors import make_extractor_class
 
 
 class Defaults:
-    TOTAL_TIMESTEPS = 1000000
+    TOTAL_TIMESTEPS = 1500000
     EVAL_FREQ = 10000
     EVAL_EPISODES = 10
     SEED = 42
@@ -55,6 +53,7 @@ def get_wrapper(env: gym.Env) -> gym.Env:
 # Maintain a similar CLI to the original paper's implementation
 @click.command()
 @click.argument("output_folder", type=click.Path())
+@click.argument("map_size", type=click.Choice(['4', '10']))
 @click.option("--load", "-l", "load_path")
 @click.option("--seed", type=int, default=Defaults.SEED, help="seed of the experiment")
 @click.option(
@@ -97,6 +96,7 @@ def get_wrapper(env: gym.Env) -> gym.Env:
 )
 def train(
     output_folder,
+    map_size,
     load_path,
     seed,
     total_timesteps,
@@ -108,17 +108,17 @@ def train(
     use_wandb,
 ):
     if use_wandb:
-        run = wandb.init(
-            project="invalidActions",
+        wandb.init(
+            project="invalid-actions-sb3-10x10",
             sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
             monitor_gym=True,  # auto-upload the videos of agents playing the game
             save_code=True,  # optional
             anonymous="true",  # wandb documentation is wrong...
         )
 
-    base_output = Path(output_folder)
-    full_output = base_output / datetime.datetime.now().isoformat(timespec="seconds")
-    logger.configure(folder=str(full_output))
+    map_dims = f"{map_size}x{map_size}"
+    base_output = Path(output_folder) / map_dims
+    timestring = datetime.datetime.now().isoformat(timespec="seconds")
 
     # We want deterministic operations whenever possible, but unfortunately we
     # still depend on some non-deterministic operations like
@@ -138,21 +138,23 @@ def train(
     # env.action_space.seed(seed)
     # env.observation_space.seed(seed)
 
-    env_id = "MicrortsMining10x10F9-v0"
-    n_envs = 8
+    env_id = f"MicrortsMining{map_dims}F9-v0"
+    n_envs = 16
     env = make_vec_env(env_id, n_envs=n_envs, wrapper_class=get_wrapper)
     env = VecNormalize(env, norm_reward=False)
 
+    # TODO do these really have to be separately defined?
     eval_env = make_vec_env(env_id, n_envs=10, wrapper_class=get_wrapper)
     eval_env = VecNormalize(eval_env, training=False, norm_reward=False)
 
     if mask:
         Alg = MaskablePPO
-        EvalCallback = MaskableEvalCallback
+        EvalCallbackCls = MaskableEvalCallback
     else:
         Alg = PPO
+        EvalCallbackCls = EvalCallback
 
-    eval_callback = EvalCallback(eval_env, eval_freq=max(eval_freq // n_envs, 1), n_eval_episodes=eval_episodes)
+    eval_callback = EvalCallbackCls(eval_env, eval_freq=max(eval_freq // n_envs, 1), n_eval_episodes=eval_episodes)
 
     lr = lambda progress_remaining: progress_remaining * learning_rate
 
@@ -177,16 +179,16 @@ def train(
             policy_kwargs={
                 "net_arch": [128],
                 "activation_fn": nn.ReLU,
-                "features_extractor_class": MicroRTSExtractor,
+                "features_extractor_class": make_extractor_class(map_size),
                 "ortho_init": True,
             },
-            tensorboard_log=str(full_output / f"runs/{run.id}"),
+            tensorboard_log=str(base_output / f"runs/{timestring}"),
         )
 
     callbacks = [eval_callback]
     if use_wandb:
         wandb_callback = WandbCallback(
-            model_save_path=str(full_output / f"models/{run.id}")
+            model_save_path=str(base_output / f"models/{timestring}")
         )
         callbacks.append(wandb_callback)
 
@@ -199,7 +201,7 @@ def train(
             total_timesteps=total_timesteps, callback=callbacks,
         )
 
-    model.save(str(full_output / "final_model"))
+    model.save(str(base_output / f"models/{timestring}"))
     env.close()
 
 
