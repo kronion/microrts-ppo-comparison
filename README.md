@@ -17,8 +17,6 @@ rm -fR ~/microrts && mkdir ~/microrts && \
 ```
 
 Then install the necessary Python packages:
-```
-
 ```bash
 pip install -r requirements.txt
 ```
